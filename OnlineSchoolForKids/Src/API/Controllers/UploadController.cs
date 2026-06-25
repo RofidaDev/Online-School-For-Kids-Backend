@@ -52,4 +52,31 @@ public class UploadController : ControllerBase
             mediaType = isImage ? "image" : "video"
         });
     }
+
+
+    /// <summary>POST /api/upload/chat-media — upload an image or file attachment for chat</summary>
+    [HttpPost("chat-media")]
+    public async Task<IActionResult> UploadChatMedia(
+        IFormFile file,
+        CancellationToken ct = default)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { message = "No file provided." });
+
+        const long maxChatFileSize = 25 * 1024 * 1024; // 25 MB — adjust as you like
+        if (file.Length > maxChatFileSize)
+            return BadRequest(new { message = "File must be under 25 MB." });
+
+        var isImage = _fileStorage.IsImageFile(file.FileName);
+
+        await using var stream = file.OpenReadStream();
+        var url = await _fileStorage.UploadFileAsync(stream, file.FileName, "chat");
+
+        return Ok(new
+        {
+            url,
+            fileName = file.FileName,
+            type = isImage ? "image" : "file"
+        });
+    }
 }

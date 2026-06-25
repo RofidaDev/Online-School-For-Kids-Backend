@@ -1,4 +1,5 @@
 ﻿using Domain.Entities;
+using Domain.Entities.Chat;
 using Domain.Entities.Content;
 using Domain.Entities.Content.Calendar;
 using Domain.Entities.Content.Leaderboard;
@@ -62,6 +63,10 @@ public class MongoDbContext
 
     public IMongoCollection<VideoProcessingJob> VideoProcessingJobs =>
      _database.GetCollection<VideoProcessingJob>("videoProcessingJobs");
+
+    public IMongoCollection<Conversation> Conversations => _database.GetCollection<Conversation>("conversations");
+    public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
+    public IMongoCollection<ChatMessage> ChatMessages => _database.GetCollection<ChatMessage>("chatMessages");
 
 
     public IMongoCollection<T> GetCollection<T>(string name)
