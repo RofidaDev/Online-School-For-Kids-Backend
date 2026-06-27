@@ -4,6 +4,7 @@ using Application;
 using Application.Mapping;
 using Infrastructure;
 using Infrastructure.Data.Seeding;
+using Infrastructure.Hubs;
 using Infrastructure.Repositories;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.OpenApi.Models;
@@ -30,7 +31,6 @@ builder.Services.AddSwaggerGen(c =>
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer"
     });
-
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
@@ -130,6 +130,7 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<NotificationHub>("/hubs/notifications");
 app.MapHealthChecks("/health");
 
 // Cleanup rate limiting cache periodically

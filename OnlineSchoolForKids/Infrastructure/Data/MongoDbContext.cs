@@ -8,6 +8,7 @@ using Domain.Entities.Content.Orders;
 using Domain.Entities.Content.Progress;
 using Domain.Entities.Content.Quiz;
 using Domain.Entities.Feed;
+using Domain.Entities.Notification;
 using Domain.Entities.Users;
 using Infrastructure.Settings;
 using Microsoft.Extensions.Options;
@@ -58,8 +59,8 @@ public class MongoDbContext
 
 
     public IMongoCollection<Post> Posts => _database.GetCollection<Post>("posts");
-   public IMongoCollection<PostReaction> PostReactions => _database.GetCollection<PostReaction>("postReactions");
-   public IMongoCollection<PostComment> PostComments => _database.GetCollection<PostComment>("postComments");
+    public IMongoCollection<PostReaction> PostReactions => _database.GetCollection<PostReaction>("postReactions");
+    public IMongoCollection<PostComment> PostComments => _database.GetCollection<PostComment>("postComments");
 
     public IMongoCollection<VideoProcessingJob> VideoProcessingJobs =>
      _database.GetCollection<VideoProcessingJob>("videoProcessingJobs");
@@ -67,6 +68,7 @@ public class MongoDbContext
     public IMongoCollection<Conversation> Conversations => _database.GetCollection<Conversation>("conversations");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<ChatMessage> ChatMessages => _database.GetCollection<ChatMessage>("chatMessages");
+    public IMongoCollection<Notification> Notifications => _database.GetCollection<Notification>("notifications");
 
 
     public IMongoCollection<T> GetCollection<T>(string name)
