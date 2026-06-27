@@ -1,13 +1,14 @@
+using API.Hubs;
 using API.Middleware;
 using Application;
 using Application.Mapping;
 using Infrastructure;
 using Infrastructure.Data.Seeding;
+using Infrastructure.Repositories;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
-
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
@@ -19,20 +20,19 @@ builder.Services.AddSwaggerGen(c =>
         Title = "EduPlatform API",
         Version = "v1",
         Description = "Educational platform API with JWT authentication"
-    }); 
+    });
 
-    // Add JWT Authentication to Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-{
-Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
-Name = "Authorization",
-In = ParameterLocation.Header,
-Type = SecuritySchemeType.ApiKey,
-Scheme = "Bearer"
-});
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
 
-c.AddSecurityRequirement(new OpenApiSecurityRequirement
-{
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
         {
             new OpenApiSecurityScheme
             {
@@ -44,49 +44,57 @@ c.AddSecurityRequirement(new OpenApiSecurityRequirement
             },
             new string[] {}
         }
+    });
 });
-});
-
 #endregion
 
 #region Add Application and Infrastructure DI
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
-
 #endregion
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+builder.Services.AddScoped<ChatRepository>();
 
 builder.Services.AddAutoMapper(typeof(CourseMappingProfile).Assembly);
 
 #region CORS
 builder.Services.AddCors(options =>
 {
-options.AddPolicy("AllowFrontend", policy =>
-{
-policy.WithOrigins(
-        builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
-        ?? new[] { "http://localhost:8080" })
-    .AllowAnyMethod()
-    .AllowAnyHeader()
-    .AllowCredentials()
- .WithExposedHeaders("Content-Disposition");
-});
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins(
+                builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
+                ?? new[] { "http://localhost:8080" })
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Disposition");
+    });
 });
 #endregion
 
 #region Files
 builder.Services.Configure<FormOptions>(options =>
 {
-options.MultipartBodyLengthLimit = 10 * 1024 * 1024; // 10MB max
-options.ValueLengthLimit = int.MaxValue;
-options.MultipartHeadersLengthLimit = int.MaxValue;
+    options.MultipartBodyLengthLimit = 1000 * 1024 * 1024;
+    options.ValueLengthLimit = int.MaxValue;
+    options.MultipartHeadersLengthLimit = int.MaxValue;
 });
 
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
-    serverOptions.Limits.MaxRequestBodySize = 10 * 1024 * 1024; // 10MB
-}); 
+    serverOptions.Limits.MaxRequestBodySize = 1000 * 1024 * 1024;
+});
 #endregion
 
+#region SignalR
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    options.MaximumReceiveMessageSize = 1024 * 1024; // 1 MB
+});
+#endregion
 
 // Health checks
 builder.Services.AddHealthChecks();
@@ -94,10 +102,16 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
+// CORS must come before routing / auth / hubs
 app.UseCors("AllowFrontend");
 
-
-// Configure the HTTP request pipeline.
+// ── SignalR hub ───────────────────────────────────────────────────────────────
+app.MapHub<ChatHub>("/hubs/chat", options =>
+{
+    options.Transports =
+        Microsoft.AspNetCore.Http.Connections.HttpTransportType.WebSockets |
+        Microsoft.AspNetCore.Http.Connections.HttpTransportType.LongPolling;
+});
 
 if (app.Environment.IsDevelopment())
 {
@@ -110,15 +124,11 @@ if (app.Environment.IsDevelopment())
 
 // Custom middleware
 app.UseGlobalExceptionHandler();
-app.UseRateLimiting(requestLimit: 100, timeWindowSeconds: 60);
 
 app.UseHttpsRedirection();
-
 app.UseStaticFiles();
-
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 app.MapHealthChecks("/health");
 
@@ -129,8 +139,6 @@ var cleanupTimer = new Timer(_ =>
 }, null, TimeSpan.Zero, TimeSpan.FromMinutes(5));
 
 await SuperAdminSeeder.SeedAsync(app);
-await CourseSeeder.SeedAsync(app);
 await SpecialistSeeder.SeedAsync(app);
-
 
 app.Run();

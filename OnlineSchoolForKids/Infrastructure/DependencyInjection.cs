@@ -1,4 +1,5 @@
-﻿using Domain.Interfaces.Repositories;
+﻿using Application.Services;
+using Domain.Interfaces.Repositories;
 using Domain.Interfaces.Repositories.Content;
 using Domain.Interfaces.Repositories.Users;
 using Domain.Interfaces.Services;
@@ -40,35 +41,23 @@ public static class DependencyInjection
             new IgnoreIfNullConvention(true)
         };
 
-        ConventionRegistry.Register("CustomConventions", conventions, _ => true); 
+        ConventionRegistry.Register("CustomConventions", conventions, _ => true);
 
         services.AddSingleton<MongoDbContext>();
         #endregion
 
-
         #region Redis
-        var redisConnection = configuration.GetConnectionString("Redis");
-
-        if (!string.IsNullOrEmpty(redisConnection))
-        {
-            services.AddSingleton<IConnectionMultiplexer>(sp =>
-            {
-                var config = ConfigurationOptions.Parse(redisConnection);
-                config.AbortOnConnectFail = false; // ← Don't crash if Redis is down
-                config.ConnectRetry = 3;
-                config.ConnectTimeout = 5000;
-                return ConnectionMultiplexer.Connect(config);
-            });
-        }
+        services.AddSingleton(new UpstashRedisClient(
+            configuration["Upstash:Url"]!,
+            configuration["Upstash:Token"]!
+        ));
         #endregion
 
-
-
         services.AddMemoryCache();
-      
+
         #region Repositories
         services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
-        
+
         // Auth , User Module
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
@@ -96,21 +85,21 @@ public static class DependencyInjection
         services.AddScoped<IBadgeRepository, BadgeRepository>();
         services.AddScoped<IPointTransactionRepository, PointTransactionRepository>();
         services.AddScoped<IReportedContentRepository, ReportedContentRepository>();
-
         services.AddScoped<ICategoryRepository, CategoryRepository>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
-
         services.AddScoped<ICouponRepository, CouponRepository>();
-
         services.AddScoped<IAppointmentRepository, AppointmentRepository>();
         services.Configure<GoogleMeetOptions>(configuration.GetSection("GoogleMeet"));
-        services.AddScoped<IGoogleMeetService,GoogleMeetService>();
-
+        services.AddScoped<IGoogleMeetService, GoogleMeetService>();
         services.AddHostedService<BackgroundJobs.AppointmentExpiryJob>();
+        services.AddScoped<IPostRepository, PostRepository>();
+        services.AddScoped<IPostReactionRepository, PostReactionRepository>();
+        services.AddScoped<IPostCommentRepository, PostCommentRepository>();
+        services.AddScoped<IFollowRepository, FollowRepository>();
 
+        // Chat
+        services.AddScoped<ChatRepository>();
         #endregion
-
-
 
         #region Services
         services.Configure<JwtSettings>(configuration.GetSection("JwtSettings"));
@@ -122,10 +111,9 @@ public static class DependencyInjection
         services.AddScoped<ITotpService, TotpService>();
         services.AddHttpClient<IGoogleAuthService, GoogleAuthService>();
         services.AddScoped<IFileStorageService, FileStorageService>();
-
         services.AddScoped<ICouponValidationService, CouponValidationService>();
-
-
+        services.AddScoped<IVideoProcessingJobRepository, VideoProcessingJobRepository>();
+        services.AddScoped<IFeedService, FeedService>();
         services.AddPaymentProcessors();
         #endregion
 
@@ -135,7 +123,7 @@ public static class DependencyInjection
         services.AddAuthentication(options =>
         {
             options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            options.DefaultChallengeScheme    = JwtBearerDefaults.AuthenticationScheme;
             options.DefaultSignInScheme       = CookieAuthenticationDefaults.AuthenticationScheme;
         })
         .AddJwtBearer(options =>
@@ -144,17 +132,36 @@ public static class DependencyInjection
             options.SaveToken = true;
             options.TokenValidationParameters = new TokenValidationParameters
             {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidateLifetime = true,
+                ValidateIssuer           = true,
+                ValidateAudience         = true,
+                ValidateLifetime         = true,
                 ValidateIssuerSigningKey = true,
-                ValidIssuer = jwtSettings?.Issuer,
-                ValidAudience = jwtSettings?.Audience,
-                IssuerSigningKey = new SymmetricSecurityKey(
+                ValidIssuer              = jwtSettings?.Issuer,
+                ValidAudience            = jwtSettings?.Audience,
+                IssuerSigningKey         = new SymmetricSecurityKey(
                     Encoding.UTF8.GetBytes(jwtSettings?.Secret ?? string.Empty)),
                 ClockSkew = TimeSpan.Zero
             };
-        }).AddCookie()
+
+            // ── Required for SignalR ──────────────────────────────────────────
+            // The SignalR JS client sends the JWT as ?access_token=... in the
+            // WebSocket handshake URL because browsers can't set Authorization
+            // headers on WebSocket connections.
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var token = context.Request.Query["access_token"];
+                    if (!string.IsNullOrEmpty(token) &&
+                        context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                    {
+                        context.Token = token;
+                    }
+                    return Task.CompletedTask;
+                }
+            };
+        })
+        .AddCookie()
         .AddGoogle(options =>
         {
             options.ClientId     = configuration["Google:ClientId"]!;
@@ -162,9 +169,9 @@ public static class DependencyInjection
             options.SaveTokens   = true;
             options.ClaimActions.MapJsonKey("picture", "picture");
             options.ClaimActions.MapJsonKey("email_verified", "email_verified");
-        }); ;
+        });
 
-        services.AddAuthorization(); 
+        services.AddAuthorization();
         #endregion
 
         return services;
