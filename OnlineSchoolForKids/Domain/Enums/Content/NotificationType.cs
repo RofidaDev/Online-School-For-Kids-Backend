@@ -8,6 +8,8 @@
         ParentLinkInvitation,
         ParentLinked,
         ParentLinkAccepted,
-        General
+        General,
+        RankAchieved,
+        BadgeEarned
     }
 }

@@ -233,7 +233,7 @@ public class EmailService : IEmailService
             .ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture);
         var timeStr = $"{appt.StartTime} – {appt.EndTime} UTC";
 
-        var icsBytes = BuildIcs(appt, specialistName, meetLink);
+        //var icsBytes = BuildIcs(appt, specialistName, meetLink);
 
         var studentBody = $@"
             <h2>Your session is confirmed! 🎉</h2>
@@ -253,11 +253,23 @@ public class EmailService : IEmailService
             <p><strong>Join here:</strong> <a href='{meetLink}'>{meetLink}</a></p>
             <p>The calendar invite (.ics) is attached.</p>";
 
-        var icsAttachment = BuildIcsAttachment(icsBytes);
-        // Emails with .ics attachment
-        await DeliverAsync(studentEmail, $"Session confirmed: {appt.Title}", studentBody, isHtml: true, icsAttachment, ct);
-        await DeliverAsync(specialistEmail, $"New session: {appt.Title}", specialistBody, isHtml: true, icsAttachment, ct);
+        var icsBytes = BuildIcs(appt, specialistName, meetLink);
 
+        await DeliverAsync(
+            studentEmail,
+            $"Session confirmed: {appt.Title}",
+            studentBody,
+            true,
+            BuildIcsAttachment(icsBytes),
+            ct);
+
+        await DeliverAsync(
+            specialistEmail,
+            $"New session: {appt.Title}",
+            specialistBody,
+            true,
+            BuildIcsAttachment(icsBytes),
+            ct);
         // 2. Notifications → saved to MongoDB → pushed via SignalR to each user
         var student = await _userRepository.GetByEmailAsync(studentEmail, ct);
         var specialist = await _userRepository.GetByEmailAsync(specialistEmail, ct);

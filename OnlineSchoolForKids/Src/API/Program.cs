@@ -22,7 +22,7 @@ builder.Services.AddSwaggerGen(c =>
         Version = "v1",
         Description = "Educational platform API with JWT authentication"
     });
-
+    //c.CustomSchemaIds(type => type.FullName);
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
