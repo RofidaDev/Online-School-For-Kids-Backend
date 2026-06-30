@@ -131,6 +131,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<NotificationHub>("/hubs/notifications");
+app.MapHub<LiveSessionHub>("/live-session");
 app.MapHealthChecks("/health");
 
 // Cleanup rate limiting cache periodically

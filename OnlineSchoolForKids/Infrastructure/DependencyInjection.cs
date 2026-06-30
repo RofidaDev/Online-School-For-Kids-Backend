@@ -93,7 +93,8 @@ public static class DependencyInjection
         services.AddScoped<IPostReactionRepository, PostReactionRepository>();
         services.AddScoped<IPostCommentRepository, PostCommentRepository>();
         services.AddScoped<IFollowRepository, FollowRepository>();
-
+        services.AddScoped<ILiveSessionRepository, LiveSessionRepository>();
+        services.AddScoped<IChatMessageRepository, ChatMessageRepository>();
         // Chat
         services.AddScoped<ChatRepository>();
         #endregion
@@ -112,6 +113,7 @@ public static class DependencyInjection
         services.AddScoped<ICouponValidationService, CouponValidationService>();
         services.AddScoped<IVideoProcessingJobRepository, VideoProcessingJobRepository>();
         services.AddScoped<IFeedService, FeedService>();
+        services.AddScoped<ILiveNotifier, LiveNotifier>();
         services.AddPaymentProcessors();
         #endregion
 

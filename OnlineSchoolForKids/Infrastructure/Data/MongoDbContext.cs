@@ -8,6 +8,7 @@ using Domain.Entities.Content.Orders;
 using Domain.Entities.Content.Progress;
 using Domain.Entities.Content.Quiz;
 using Domain.Entities.Feed;
+using Domain.Entities.Live;
 using Domain.Entities.Notification;
 using Domain.Entities.Users;
 using Infrastructure.Settings;
@@ -68,6 +69,7 @@ public class MongoDbContext
     public IMongoCollection<Conversation> Conversations => _database.GetCollection<Conversation>("conversations");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<ChatMessage> ChatMessages => _database.GetCollection<ChatMessage>("chatMessages");
+    public IMongoCollection<LiveSession> LiveSessions => _database.GetCollection<LiveSession>("live_sessions");
     public IMongoCollection<Notification> Notifications => _database.GetCollection<Notification>("notifications");
 
 
