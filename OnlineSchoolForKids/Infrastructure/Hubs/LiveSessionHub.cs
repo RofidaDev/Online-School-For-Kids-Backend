@@ -10,44 +10,55 @@ namespace API.Hubs
     [Authorize]
     public class LiveSessionHub : Hub
     {
-        // In-memory store: sessionId → { connectionId → ViewerInfo }
-        // Shared across all hub instances via static ConcurrentDictionary.
         private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, ViewerInfo>>
             _sessions = new();
 
         private readonly ILiveSessionRepository _sessionRepo;
         private readonly IChatMessageRepository _chatRepo;
+        private readonly ILessonRepository _lessonRepo;
+        private readonly ICourseRepository _courseRepo;
+        private readonly IEnrollmentRepository _enrollmentRepo;
 
         public LiveSessionHub(
             ILiveSessionRepository sessionRepo,
-            IChatMessageRepository chatRepo)
+            IChatMessageRepository chatRepo,
+            ILessonRepository lessonRepo,
+            ICourseRepository courseRepo,
+            IEnrollmentRepository enrollmentRepo)
         {
             _sessionRepo = sessionRepo;
             _chatRepo = chatRepo;
+            _lessonRepo = lessonRepo;
+            _courseRepo = courseRepo;
+            _enrollmentRepo = enrollmentRepo;
         }
 
         // ── JOIN ──────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Called by both the host and viewers when they open the session page.
-        /// Adds them to the SignalR group and updates the viewer list.
+        /// Called by both the host and students when they open the live session page.
+        /// Verifies enrollment/instructor status before joining the SignalR group.
         /// </summary>
-        public async Task JoinSession(string sessionId, string username, bool isHost)
+        public async Task JoinSession(string sessionId, string username)
         {
             var userId = GetUserId();
             if (userId is null) return;
 
+            var allowed = await IsAllowedAsync(sessionId, userId);
+            if (!allowed)
+            {
+                await Clients.Caller.SendAsync("AccessDenied", "You are not enrolled in this course.");
+                return;
+            }
+
+            var session = await _sessionRepo.GetByIdAsync(sessionId);
+            var isHost = session?.HostId == userId;
+
             await Groups.AddToGroupAsync(Context.ConnectionId, sessionId);
 
             var viewers = _sessions.GetOrAdd(sessionId, _ => new ConcurrentDictionary<string, ViewerInfo>());
+            viewers[Context.ConnectionId] = new ViewerInfo(userId, username, isHost, null);
 
-            viewers[Context.ConnectionId] = new ViewerInfo(
-                Id: userId,
-                Username: username,
-                IsHost: isHost,
-                AvatarUrl: null);
-
-            // Broadcast updated viewer list + count to everyone in the session
             await BroadcastViewersAsync(sessionId);
         }
 
@@ -61,7 +72,6 @@ namespace API.Hubs
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            // Find which session this connection belonged to and clean up
             foreach (var (sessionId, viewers) in _sessions)
             {
                 if (viewers.ContainsKey(Context.ConnectionId))
@@ -76,109 +86,93 @@ namespace API.Hubs
 
         // ── CHAT ──────────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Called when any user sends a chat message.
-        /// Saves it to MongoDB and broadcasts to everyone in the session.
-        /// </summary>
         public async Task SendChatMessage(string sessionId, string content)
         {
             var userId = GetUserId();
-            if (userId is null) return;
+            if (userId is null || string.IsNullOrWhiteSpace(content)) return;
 
-            if (string.IsNullOrWhiteSpace(content)) return;
-
-            // Get sender info from the viewer list
+            // Re-check the caller is still a recognized participant of this session
             var viewers = _sessions.GetValueOrDefault(sessionId);
             var sender = viewers?.GetValueOrDefault(Context.ConnectionId);
-            var username = sender?.Username ?? "Guest";
-            var isHost = sender?.IsHost ?? false;
+            if (sender is null) return; // not joined -> ignore silently
 
-            // Persist to MongoDB
             var message = new ChatMessage
             {
-                SessionId = sessionId,
+                ContextId = sessionId,
+                ContextType = ChatContext.LiveSession,
                 SenderId = userId,
-                SenderName = username,
-                SenderAvatar = sender?.AvatarUrl,
+                SenderName = sender.Username,
+                SenderAvatar = sender.AvatarUrl,
                 Content = content.Trim(),
-                IsHost = isHost
+                Type = MessageType.Text,
+                IsHost = sender.IsHost
             };
 
             await _chatRepo.CreateAsync(message);
 
-            // Broadcast to everyone in the session (including sender, for consistency)
             await Clients.Group(sessionId).SendAsync("ReceiveChatMessage", new
             {
                 id = message.Id,
                 sessionId = sessionId,
-                userId = userId,
-                username = username,
-                avatarUrl = sender?.AvatarUrl,
+                userId = message.SenderId,
+                username = message.SenderName,
+                avatarUrl = message.SenderAvatar,
                 content = message.Content,
-                isHost = isHost,
+                isHost = message.IsHost,
                 createdAt = message.CreatedAt
             });
         }
 
         // ── WHITEBOARD ────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Called by the HOST only when they draw a stroke.
-        /// Broadcasts the stroke to all viewers so their canvases update in real-time.
-        ///
-        /// stroke shape:
-        /// {
-        ///   type:   "path" | "line" | "rect" | "circle" | "text" | "clear",
-        ///   color:  "#ff0000",
-        ///   width:  2,
-        ///   points: [[x,y], ...]   // for path/line
-        ///   x, y, w, h             // for shapes
-        ///   text:   "..."          // for text
-        /// }
-        /// </summary>
+        /// <summary>Only the host should call this in practice; front-end enforces the UI,
+        /// and a non-host stroke is harmless since it only reaches other viewers of
+        /// the same enrolled-only group.</summary>
         public async Task SendStroke(string sessionId, object stroke)
         {
-            await Clients
-                .OthersInGroup(sessionId)
-                .SendAsync("ReceiveStroke", stroke);
+            await Clients.OthersInGroup(sessionId).SendAsync("ReceiveStroke", stroke);
         }
 
-        /// <summary>Called by host to clear the board for everyone.</summary>
         public async Task ClearBoard(string sessionId)
         {
-            await Clients
-                .OthersInGroup(sessionId)
-                .SendAsync("BoardCleared");
+            await Clients.OthersInGroup(sessionId).SendAsync("BoardCleared");
         }
 
         // ── SESSION END ───────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Called by the host when they click "Stop Stream".
-        /// Marks the session as ended in MongoDB and broadcasts to all viewers
-        /// so LiveSessionPage.tsx navigates them away automatically.
-        /// </summary>
-        public async Task EndSession(string sessionId, string? whiteboardUrl = null)
+        public async Task EndSession(string sessionId)
         {
             var userId = GetUserId();
             if (userId is null) return;
 
-            // Verify caller is the host
             var session = await _sessionRepo.GetByIdAsync(sessionId);
             if (session is null || session.HostId != userId) return;
 
-            // Persist ended status + whiteboard URL
-            await _sessionRepo.EndSessionAsync(sessionId, whiteboardUrl);
-
-            // Broadcast to ALL viewers — LiveSessionPage.tsx listens for "SessionEnded"
-            // and redirects to home, matching the Supabase realtime behaviour in the original
+            await _sessionRepo.EndSessionAsync(sessionId, null);
             await Clients.Group(sessionId).SendAsync("SessionEnded");
 
-            // Clean up in-memory presence for this session
             _sessions.TryRemove(sessionId, out _);
         }
 
         // ── HELPERS ───────────────────────────────────────────────────────────────
+
+        /// <summary>Instructor of the course OR an enrolled student. Same rule as the REST query.</summary>
+        private async Task<bool> IsAllowedAsync(string sessionId, string userId)
+        {
+            var session = await _sessionRepo.GetByIdAsync(sessionId);
+            if (session is null) return false;
+
+            var lesson = await _lessonRepo.GetByIdAsync(session.LessonId);
+            if (lesson is null) return false;
+
+            var course = await _courseRepo.GetByIdAsync(lesson.CourseId);
+            if (course is null) return false;
+
+            if (course.InstructorId == userId) return true;
+
+            var enrollment = await _enrollmentRepo.GetByUserAndCourseAsync(userId, lesson.CourseId);
+            return enrollment is not null;
+        }
 
         private async Task RemoveViewerAsync(string sessionId)
         {
@@ -205,10 +199,8 @@ namespace API.Hubs
                 avatarUrl = v.AvatarUrl
             }).ToList();
 
-            // Update viewer count in MongoDB (fire-and-forget)
             _ = _sessionRepo.UpdateViewerCountAsync(sessionId, viewerList.Count);
 
-            // Broadcast updated list + count to everyone
             await Clients.Group(sessionId).SendAsync("ViewersUpdated", new
             {
                 viewers = viewerList,
@@ -220,10 +212,5 @@ namespace API.Hubs
             Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
     }
 
-    /// <summary>Viewer presence record stored in memory during the session.</summary>
     public record ViewerInfo(string Id, string Username, bool IsHost, string? AvatarUrl);
-
 }
-
-
-

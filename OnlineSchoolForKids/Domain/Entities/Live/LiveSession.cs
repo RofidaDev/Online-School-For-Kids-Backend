@@ -2,6 +2,7 @@
 {
     public class LiveSession : BaseEntity
     {
+        public string LessonId { get; set; } = string.Empty;
         public string HostId { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }

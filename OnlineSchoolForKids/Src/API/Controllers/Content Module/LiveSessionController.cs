@@ -6,7 +6,7 @@ using System.Security.Claims;
 
 namespace API.Controllers.Content_Module
 {
-    [Route("api/live-sessions")]
+    [Route("api/lessons/{lessonId}/live")]
     [ApiController]
     [Authorize]
     public class LiveSessionController : ControllerBase
@@ -14,91 +14,79 @@ namespace API.Controllers.Content_Module
         private readonly IMediator _mediator;
         public LiveSessionController(IMediator mediator) => _mediator = mediator;
 
-        // ── GET api/live-sessions
-        // Discover page — all currently live sessions
-        [HttpGet]
-        [AllowAnonymous]
-        public async Task<IActionResult> GetAll(CancellationToken ct)
+        // ── POST api/lessons/{lessonId}/live/schedule
+        // Instructor schedules a live session for this lesson.
+        [HttpPost("schedule")]
+        public async Task<IActionResult> Schedule(
+            string lessonId, [FromBody] ScheduleLiveSessionRequest request, CancellationToken ct)
         {
-            var result = await _mediator.Send(new GetLiveSessionsQuery(), ct);
+            var instructorId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            var result = await _mediator.Send(new ScheduleLiveSessionCommand(
+                instructorId, lessonId, request.Title, request.Description,
+                request.AllowChat, request.AllowQuestions, request.ScheduledAt), ct);
+
             if (!result.IsSuccess) return BadRequest(new { error = result.Error });
             return Ok(result.Data);
         }
 
-        // ── GET api/live-sessions/{id}
-        // LiveSessionPage.tsx calls this on mount to get session details + channel name
-        [HttpGet("{id}")]
-        public async Task<IActionResult> Get(string id, CancellationToken ct)
+        // ── POST api/lessons/{lessonId}/live/{sessionId}/start
+        // Instructor goes live -- notifies all enrolled students instantly.
+        [HttpPost("{sessionId}/start")]
+        public async Task<IActionResult> Start(string lessonId, string sessionId, CancellationToken ct)
+        {
+            var instructorId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var result = await _mediator.Send(new StartLiveSessionCommand(instructorId, sessionId), ct);
+            if (!result.IsSuccess) return BadRequest(new { error = result.Error });
+            return Ok(result.Data);
+        }
+
+        // ── PATCH api/lessons/{lessonId}/live/{sessionId}/end
+        // Instructor ends the session and optionally uploads the whiteboard PNG.
+        [HttpPatch("{sessionId}/end")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> End(
+            string lessonId, string sessionId,
+            [FromForm] EndLiveSessionRequest request, CancellationToken ct)
+        {
+            var instructorId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var result = await _mediator.Send(
+                new EndLiveSessionCommand(instructorId, sessionId, request.WhiteboardImage), ct);
+
+            if (!result.IsSuccess) return BadRequest(new { error = result.Error });
+            return Ok(new { whiteboardUrl = result.Data });
+        }
+
+        // ── GET api/lessons/{lessonId}/live/{sessionId}
+        // Get session details -- only the instructor or an enrolled student can see it.
+        [HttpGet("{sessionId}")]
+        public async Task<IActionResult> Get(string lessonId, string sessionId, CancellationToken ct)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var result = await _mediator.Send(new GetLiveSessionQuery(id, userId), ct);
-            if (!result.IsSuccess) return NotFound(new { error = result.Error });
+            var result = await _mediator.Send(new GetLiveSessionQuery(sessionId, userId), ct);
+            if (!result.IsSuccess) return Forbid();
             return Ok(result.Data);
         }
 
-        // ── POST api/live-sessions
-        // GoLivePage.tsx calls this when the host clicks "Go Live"
-        // Returns the session id and channelName the frontend needs
-        [HttpPost]
-        public async Task<IActionResult> Create([FromBody] CreateLiveSessionRequest request, CancellationToken ct)
+        // ── GET api/lessons/{lessonId}/live/{sessionId}/chat
+        [HttpGet("{sessionId}/chat")]
+        public async Task<IActionResult> GetChat(string lessonId, string sessionId, CancellationToken ct)
         {
-            var hostId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-            DateTime? scheduledAt = null;
-            if (request.IsScheduled && !string.IsNullOrEmpty(request.ScheduledAt))
-                scheduledAt = DateTime.Parse(request.ScheduledAt);
-
-            var result = await _mediator.Send(new CreateLiveSessionCommand(
-                hostId,
-                request.Title,
-                request.Description,
-                request.Category,
-                request.AllowChat,
-                request.AllowQuestions,
-                scheduledAt), ct);
-
-            if (!result.IsSuccess) return BadRequest(new { error = result.Error });
-            return Ok(result.Data);
-        }
-
-        // ── PATCH api/live-sessions/{id}/end
-        // GoLivePage.tsx calls this when host clicks "Stop Stream"
-        // Also accepts an optional whiteboard PNG as multipart/form-data
-        [HttpPatch("{id}/end")]
-        [Consumes("multipart/form-data")]
-        public async Task<IActionResult> End(string id, [FromForm] EndLiveSessionRequest request, CancellationToken ct)
-        {
-            var hostId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var result = await _mediator.Send(new EndLiveSessionCommand(hostId, id, request.WhiteboardImage), ct);
-            if (!result.IsSuccess) return BadRequest(new { error = result.Error });
-            return Ok(new { message = result.Data });
-        }
-
-        // ── GET api/live-sessions/{id}/chat
-        // Load chat history when a user joins (so they see messages sent before they arrived)
-        [HttpGet("{id}/chat")]
-        public async Task<IActionResult> GetChat(string id, CancellationToken ct)
-        {
-            var result = await _mediator.Send(new GetChatHistoryQuery(id), ct);
+            var result = await _mediator.Send(new GetChatHistoryQuery(sessionId), ct);
             if (!result.IsSuccess) return BadRequest(new { error = result.Error });
             return Ok(result.Data);
         }
     }
 
-    // ── Request bodies ────────────────────────────────────────────────────────────
-
-    public record CreateLiveSessionRequest(
+    public record ScheduleLiveSessionRequest(
         string Title,
         string? Description,
-        string? Category,
         bool AllowChat,
         bool AllowQuestions,
-        bool IsScheduled,
-        string? ScheduledAt);
+        DateTime? ScheduledAt);
 
     public class EndLiveSessionRequest
     {
-        public Microsoft.AspNetCore.Http.IFormFile? WhiteboardImage { get; set; }
+        public IFormFile? WhiteboardImage { get; set; }
     }
-
 }

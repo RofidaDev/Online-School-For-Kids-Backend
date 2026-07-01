@@ -11,12 +11,9 @@ namespace Infrastructure.Repositories.Content
         public LiveSessionRepository(MongoDbContext context)
             : base(context.GetCollection<LiveSession>("live_sessions")) { }
 
-        public async Task<IEnumerable<LiveSession>> GetLiveSessionsAsync(CancellationToken ct = default)
+        public async Task<LiveSession?> GetByLessonIdAsync(string lessonId, CancellationToken ct = default)
         {
-            return await _collection
-                .Find(s => s.Status == "live" && !s.IsDeleted)
-                .SortByDescending(s => s.StartedAt)
-                .ToListAsync(ct);
+            return await GetOneAsync(s => s.LessonId == lessonId, ct);
         }
 
         public async Task UpdateViewerCountAsync(string sessionId, int count, CancellationToken ct = default)
@@ -49,7 +46,9 @@ namespace Infrastructure.Repositories.Content
             string sessionId, CancellationToken ct = default)
         {
             return await _collection
-                .Find(m => m.SessionId == sessionId && !m.IsDeleted)
+                .Find(m => m.ContextId == sessionId
+                        && m.ContextType == ChatContext.LiveSession
+                        && !m.IsDeleted)
                 .SortBy(m => m.CreatedAt)
                 .ToListAsync(ct);
         }

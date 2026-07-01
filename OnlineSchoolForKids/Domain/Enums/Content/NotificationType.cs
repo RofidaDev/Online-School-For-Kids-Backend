@@ -10,6 +10,7 @@
         ParentLinkAccepted,
         General,
         RankAchieved,
-        BadgeEarned
+        BadgeEarned,
+        LiveSessionStarting
     }
 }

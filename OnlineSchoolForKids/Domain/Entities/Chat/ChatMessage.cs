@@ -38,5 +38,5 @@ public class MessageReaction
     public string UserId { get; set; } = string.Empty;
 }
 
-public enum ChatContext { DirectMessage, Group }
+public enum ChatContext { DirectMessage, Group, LiveSession }
 public enum MessageType { Text, Image, File }
